@@ -30,6 +30,7 @@ from pypdf import PdfReader
 from docx import Document
 import nltk
 nltk.download('punkt')
+nltk.download('punkt_tab')
 from nltk.tokenize import sent_tokenize
 
 main_bg = "#1B2A2F"
@@ -40,8 +41,8 @@ text_fg = "#FFFFFF"
 
 # uncomment the model you want to use
 # model_ref = 'collabora/whisperspeech:s2a-q4-small-en+pl.model'
-# model_ref = 'collabora/whisperspeech:s2a-q4-tiny-en+pl.model'
-model_ref = 'collabora/whisperspeech:s2a-q4-base-en+pl.model'
+model_ref = 'collabora/whisperspeech:s2a-q4-tiny-en+pl.model'
+# model_ref = 'collabora/whisperspeech:s2a-q4-base-en+pl.model'
 
 pipe = Pipeline(s2a_ref=model_ref)
 
@@ -61,11 +62,16 @@ class TextUtilities:
         return ' '.join([paragraph.text for paragraph in doc.paragraphs])
 
     def txt_to_text(self, txt_file_path):
-        with open(txt_file_path, 'r', encoding='utf-8') as file:
-            text = file.read()
-        return text
+        try:
+            with open(txt_file_path, 'r', encoding='utf-8') as file:
+                return file.read()
+        except UnicodeDecodeError:
+            with open(txt_file_path, 'r', encoding='latin-1', errors='ignore') as file:
+                return file.read()
 
     def clean_text(self, text):
+        if not text:
+            return ""
         text = text.encode('utf-8', 'ignore').decode('utf-8')
         text = text.replace('\n', ' ')
         sentences = sent_tokenize(text)
@@ -97,7 +103,11 @@ def play_audio_from_queue(audio_queue):
 
 def start_processing():
     user_input = text_input.get("1.0", "end-1c")  # Get text from the text input widget
+    if not user_input.strip():
+        print("No text in input field to process!")
+        return
     sentences = sent_tokenize(user_input)  # Use NLTK's sent_tokenize to define a sentence
+    print(f"Processing {len(sentences)} sentence(s)...")
     while not audio_queue.empty():  # Ensure the audio queue is empty before starting
         audio_queue.get()  # Remove and discard any remaining items in the queue
     processing_thread = threading.Thread(target=process_text_to_audio, args=(sentences, pipe))  # Set up thread for text-to-audio processing
@@ -108,27 +118,32 @@ def start_processing():
 def select_file():
     file_path = filedialog.askopenfilename()
     if file_path:
+        print(f"Selected file: {file_path}")
         text = process_file(file_path)
-        text_input.delete("1.0", END)
-        text_input.insert("1.0", text)
+        if text.strip():
+            text_input.delete("1.0", END)
+            text_input.insert("1.0", text)
+            print(f"Successfully loaded {len(text)} characters into text window.")
+        else:
+            print(f"Warning: No text could be extracted from {file_path}")
 
 def process_file(file_path):
     utilities = TextUtilities()
     text = ""
-    if file_path.lower().endswith('.pdf'):
-        text = utilities.pdf_to_text(file_path)
-    elif file_path.lower().endswith('.docx'):
-        text = utilities.docx_to_text(file_path)
-    elif file_path.lower().endswith(('.txt', '.py', '.html', '.md')):
-        text = utilities.txt_to_text(file_path)
-    text = utilities.clean_text(text)
+    try:
+        if file_path.lower().endswith('.pdf'):
+            text = utilities.pdf_to_text(file_path)
+        elif file_path.lower().endswith('.docx'):
+            text = utilities.docx_to_text(file_path)
+        else:
+            text = utilities.txt_to_text(file_path)
+        text = utilities.clean_text(text)
+    except Exception as e:
+        print(f"Error reading file {file_path}: {e}")
     return text
 
 root = Tk()
 root.title("Text to Speech")
-
-# Make the window always on top
-root.attributes('-topmost', 1)
 
 root.configure(bg=main_bg)
 
