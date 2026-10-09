@@ -19,11 +19,13 @@ https://pytorch.org/get-started/locally/
 '''
 
 from tkinter import *
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import numpy as np
 import re
 import threading
 import queue
+import torch
+import torchaudio
 from whisperspeech.pipeline import Pipeline
 import sounddevice as sd
 from pypdf import PdfReader
@@ -78,10 +80,12 @@ class TextUtilities:
         cleaned_text = ' '.join(sentences)
         return cleaned_text
 
-def process_text_to_audio(sentences, pipe):
+def process_text_to_audio(sentences, pipe, save_file_path=None):
+    all_tensors = []
     for sentence in sentences:  # Iterate through each sentence in the list
         if sentence:  # Check if sentence is not empty
             audio_tensor = pipe.generate(sentence)  # Generate audio tensor for the sentence using the pipeline
+            all_tensors.append(audio_tensor.cpu())
             audio_np = (audio_tensor.cpu().numpy() * 32767).astype(np.int16)  # Convert tensor to numpy array, scale, and typecast
             if len(audio_np.shape) == 1:  # Check if the numpy array is 1D
                 audio_np = np.expand_dims(audio_np, axis=0)  # Make the numpy array 2D for compatibility
@@ -89,6 +93,14 @@ def process_text_to_audio(sentences, pipe):
                 audio_np = audio_np.T  # Transpose the array to match expected input shape
             audio_queue.put(audio_np)  # Place the audio numpy array into the queue
     audio_queue.put(None)  # Signal that processing is complete by putting None
+
+    if save_file_path and all_tensors:
+        try:
+            full_audio = torch.cat(all_tensors, dim=-1)
+            torchaudio.save(save_file_path, full_audio, 24000)
+            print(f"Successfully saved audio file to: {save_file_path}")
+        except Exception as e:
+            print(f"Error saving audio file: {e}")
 
 def play_audio_from_queue(audio_queue):
     while True:  # Continuously attempt to play audio from the queue
@@ -101,7 +113,7 @@ def play_audio_from_queue(audio_queue):
         except Exception as e:
             print(f"Error playing audio: {e}")  # Print any errors during playback
 
-def start_processing():
+def start_processing(save_file_path="output.wav"):
     user_input = text_input.get("1.0", "end-1c")  # Get text from the text input widget
     if not user_input.strip():
         print("No text in input field to process!")
@@ -110,10 +122,18 @@ def start_processing():
     print(f"Processing {len(sentences)} sentence(s)...")
     while not audio_queue.empty():  # Ensure the audio queue is empty before starting
         audio_queue.get()  # Remove and discard any remaining items in the queue
-    processing_thread = threading.Thread(target=process_text_to_audio, args=(sentences, pipe))  # Set up thread for text-to-audio processing
+    processing_thread = threading.Thread(target=process_text_to_audio, args=(sentences, pipe, save_file_path))  # Set up thread for text-to-audio processing
     playback_thread = threading.Thread(target=play_audio_from_queue, args=(audio_queue,))  # Set up thread for audio playback
     processing_thread.start()  # Start the processing thread
     playback_thread.start()  # Start the playback thread
+
+def save_and_process():
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=".wav",
+        filetypes=[("WAV Audio File", "*.wav"), ("All Files", "*.*")]
+    )
+    if file_path:
+        start_processing(save_file_path=file_path)
 
 def select_file():
     file_path = filedialog.askopenfilename()
@@ -153,13 +173,16 @@ root.grid_rowconfigure(0, weight=1)
 text_input = Text(root, bg=widget_bg, fg=text_fg)
 text_input.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
 
-process_button = Button(root, text="Text to Speech", command=start_processing, bg=button_bg, fg=text_fg)
-process_button.grid(row=1, column=0, sticky='ew', padx=10)
+process_button = Button(root, text="Text to Speech (Play & Auto-Save output.wav)", command=lambda: start_processing("output.wav"), bg=button_bg, fg=text_fg)
+process_button.grid(row=1, column=0, sticky='ew', padx=10, pady=2)
+
+save_button = Button(root, text="Text to Speech & Save as Custom .wav File...", command=save_and_process, bg=button_bg, fg=text_fg)
+save_button.grid(row=2, column=0, sticky='ew', padx=10, pady=2)
 
 file_button = Button(root, text="Extract Text from File", command=select_file, bg=button_bg, fg=text_fg)
-file_button.grid(row=2, column=0, sticky='ew', padx=10)
+file_button.grid(row=3, column=0, sticky='ew', padx=10, pady=2)
 
-support_label = Label(root, text="Supports .pdf (with OCR already done on them), .docx, and .txt files.", bg=label_bg, fg=text_fg)
-support_label.grid(row=3, column=0, sticky='ew')
+support_label = Label(root, text="Supports .pdf, .docx, and .txt files.", bg=label_bg, fg=text_fg)
+support_label.grid(row=4, column=0, sticky='ew')
 
 root.mainloop()
